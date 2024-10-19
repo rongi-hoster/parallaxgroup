@@ -1,0 +1,69 @@
+name: Deploy to AWS Lightsail
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Checkout the code from the repository
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      # Step 2: Set up Docker Buildx (for building multi-platform images)
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+
+      # Step 3: Install Docker Compose
+      - name: Install Docker Compose
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y docker-compose
+
+      # Step 4: Add SSH key for Lightsail (from GitHub Secrets)
+      - name: Add SSH key for Lightsail
+        run: |
+          echo "${{ secrets.AWS_LIGHTSAIL_PEM_KEY }}" > lightsail-key.pem
+          chmod 400 lightsail-key.pem
+
+      # Step 5: Deploy to AWS Lightsail
+      - name: Deploy to AWS Lightsail
+        run: |
+          set -e  # Exit the script if any command fails
+
+          ssh -i lightsail-key.pem -o "StrictHostKeyChecking=no" ubuntu@54.227.222.76 << 'EOF'
+          # Navigate to your application directory on Lightsail
+          cd /home/ubuntu/app/docker-server
+
+          # Pull the latest code from GitHub repository
+          echo "Pulling latest code from GitHub..."
+          git pull || { echo 'Git pull failed'; exit 1; }
+
+          # Build and install frontend
+          echo "Installing frontend dependencies..."
+          cd frontend
+          npm install || { echo 'Frontend npm install failed'; exit 1; }
+          cd ..
+
+          # Build and install backend
+          echo "Installing backend dependencies and pushing Prisma schema..."
+          cd backend
+          npm install || { echo 'Backend npm install failed'; exit 1; }
+          npx prisma db push || { echo 'Prisma db push failed'; exit 1; }
+          cd ..
+
+          # Stop and remove any running containers
+          echo "Stopping and removing any running Docker containers..."
+          docker-compose down || { echo 'Failed to stop Docker containers'; exit 1; }
+
+          # Build and start the containers
+          echo "Building and starting Docker containers..."
+          docker-compose up --build -d || { echo 'Failed to start Docker containers'; exit 1; }
+
+          # Success message
+          echo "Deployment to AWS Lightsail completed successfully!"
+          EOF
